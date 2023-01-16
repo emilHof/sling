@@ -1,6 +1,6 @@
 [package]
 name = "sling"
-version = "0.0.0-pre-release0.0"
+version = "0.0.0-pre-release0.1"
 edition = "2021"
 license = "MIT"
 description = "Sequentially lockign (SeqLock) Ring Buffer"
@@ -11,4 +11,9 @@ readme = "./README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+nightly = []
+
 [dependencies]
+arbitrary = { version = "1.2.2", optional = true }
