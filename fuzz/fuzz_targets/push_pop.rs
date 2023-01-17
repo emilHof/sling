@@ -28,7 +28,7 @@ fuzz_target!(|data: Vec<Message>| {
 
     std::thread::scope(|s| {
         for _ in 0..16 {
-            s.spawn(move || loop {
+            s.spawn(|| loop {
                 while let Some(_) = reader.pop_front() {}
 
                 let mut counter = 0;
