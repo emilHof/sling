@@ -73,8 +73,8 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
     pub fn reader(&self) -> ReadGuard<'_, T, N> {
         ReadGuard {
             buffer: self,
-            index: 0,
-            version: self.version.load(Ordering::Acquire),
+            index: AtomicUsize::new(0),
+            version: AtomicUsize::new(self.version.load(Ordering::Acquire)),
         }
     }
 
@@ -105,11 +105,21 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct ReadGuard<'read, T: Copy, const N: usize> {
     buffer: &'read RingBuffer<T, N>,
-    index: usize,
-    version: usize,
+    index: AtomicUsize,
+    version: AtomicUsize,
+}
+
+impl<'read, T: Copy, const N: usize> Clone for ReadGuard<'read, T, N> {
+    fn clone(&self) -> Self {
+        ReadGuard {
+            buffer: self.buffer,
+            index: AtomicUsize::new(self.index.load(Ordering::Acquire)),
+            version: AtomicUsize::new(self.version.load(Ordering::Relaxed)),
+        }
+    }
 }
 
 unsafe impl<'read, T: Copy, const N: usize> Send for ReadGuard<'read, T, N> {}
@@ -117,13 +127,9 @@ unsafe impl<'read, T: Copy, const N: usize> Send for ReadGuard<'read, T, N> {}
 impl<'read, T: Copy, const N: usize> ReadGuard<'read, T, N> {
     /// Pops the next element from the front. The element is only popped for us and other threads
     /// will still need to pop this for themselves.
-    pub fn pop_front(&mut self) -> Option<T> {
+    pub fn pop_front(&self) -> Option<T> {
         // Checks if data if we are currently caught up.
-        if !self.check_version() {
-            return None;
-        }
-
-        let i = self.increment_index();
+        let i = self.check_version()?;
 
         loop {
             let seq1 = self.buffer.data[i].seq.load(Ordering::Acquire);
@@ -149,26 +155,29 @@ impl<'read, T: Copy, const N: usize> ReadGuard<'read, T, N> {
 
     /// Checks if we are reading data we have already consumed.
     #[inline]
-    fn check_version(&mut self) -> bool {
+    fn check_version(&self) -> Option<usize> {
         // The current version of the
-        let seq = self.buffer.data[self.index].seq.load(Ordering::Acquire) ^ 1;
+        let mut i = self.index.load(Ordering::Acquire);
 
-        // If we are in the beginning of the array and the version is current, that means
-        if (self.index == 0 && seq == self.version) || seq < self.version {
-            return false;
+        loop {
+            let ver = self.version.load(Ordering::Relaxed);
+            let seq = self.buffer.data[i].seq.load(Ordering::Acquire) ^ 1;
+
+            // If we are in the beginning of the array and the version is current, that means
+            if (i == 0 && seq == ver) || seq < ver {
+                return None;
+            }
+
+            self.version.fetch_max(seq, Ordering::Relaxed);
+
+            match self
+                .index
+                .compare_exchange(i, (i + 1) % N, Ordering::Release, Ordering::Acquire)
+            {
+                Err(new) => i = new,
+                Ok(i) => return Some(i),
+            }
         }
-
-        self.version = seq;
-
-        true
-    }
-
-    // Wrapping adds 1 to the index and returns the old value.
-    #[inline]
-    fn increment_index(&mut self) -> usize {
-        let index = self.index;
-        self.index = (index + 1) % N;
-        index
     }
 }
 
@@ -261,6 +270,7 @@ mod test {
         let mut reader = buffer.reader();
 
         std::thread::scope(|s| {
+            let reader = &reader;
             for t in 0..8 {
                 s.spawn(move || {
                     for _ in 0..100 {
