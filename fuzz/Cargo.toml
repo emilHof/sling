@@ -26,3 +26,9 @@ name = "push_pop"
 path = "fuzz_targets/push_pop.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "sanity"
+path = "fuzz_targets/sanity.rs"
+test = false
+doc = false
