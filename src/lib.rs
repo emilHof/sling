@@ -264,14 +264,14 @@ mod test {
                 s.spawn(move || {
                     for _ in 0..100 {
                         if let Some(val) = reader.pop_front() {
-                            println!("t: {}, val: {}", t, val);
+                            println!("t: {}, val: {:?}", t, val);
                         };
                     }
                 });
             }
 
-            for i in 0..100 {
-                writer.push_back(i);
+            for _ in 0..100 {
+                writer.push_back([0, 32, 31, 903, 1, 4, 23, 12, 4, 21]);
             }
         });
     }
