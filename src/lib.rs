@@ -157,6 +157,7 @@ impl<'read, T: Copy, const N: usize> ReadGuard<'read, T, N> {
         if (self.index == 0 && seq == self.version) || seq < self.version {
             return false;
         }
+
         self.version = seq;
 
         true
