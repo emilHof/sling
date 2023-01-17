@@ -2,7 +2,8 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use lockfree::channel::spmc::create;
 use sling::RingBuffer;
 const MAX_SPIN: usize = 128;
-const BUF_LEN: usize = 1024;
+const BUF_LEN: usize = 4096;
+const ELEMENTS: usize = 10_000;
 
 fn push_pop_lockfree(t: usize) {
     let (mut writer, reader) = create();
@@ -28,7 +29,7 @@ fn push_pop_lockfree(t: usize) {
             });
         }
 
-        for _ in 0..black_box(1000) {
+        for _ in 0..black_box(ELEMENTS) {
             writer.send(1);
         }
     })
@@ -58,7 +59,7 @@ fn push_pop_sling<const N: usize>(queue: RingBuffer<u8, N>, t: usize) {
             });
         }
 
-        for _ in 0..black_box(1000) {
+        for _ in 0..black_box(ELEMENTS) {
             writer.push_back(1);
         }
     })
@@ -88,7 +89,7 @@ fn push_pop_sling_clone<const N: usize>(queue: RingBuffer<u8, N>, t: usize) {
             });
         }
 
-        for _ in 0..black_box(1000) {
+        for _ in 0..black_box(ELEMENTS) {
             writer.push_back(1);
         }
     })
