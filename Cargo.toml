@@ -22,6 +22,9 @@ arbitrary = { version = "1.2.2", optional = true }
 criterion = "0.4"
 lockfree = "0.5"
 
+[lib]
+bench = false
+
 [[bench]]
 name = "buffer"
 harness = false
