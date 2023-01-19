@@ -2,6 +2,8 @@
 //! a fast and non-writer-blocking SPMC-queue, where all consumers read all
 //! messages.
 //!
+//! # Usage
+//!
 //! There are two ways of consuming from the queue. If threads share a
 //! [ReadGuard](ReadGuard) through a shared reference, they will steal
 //! queue items from one anothers such that no two threads will read the
@@ -10,13 +12,10 @@
 //! one. If two threads each use a separate [ReadGuard](ReadGuard), they
 //! will be able to read the same messages.
 //!
-//! It is also important to keep in mind, that slow readers will be overrun by the writer if they
-//! do not consume messages quickly enough.
-//!
 //! ```rust
 //! # use sling::*;
 //!
-//! let buffer = RingBuffer::<_, 128>::new();
+//! let buffer = RingBuffer::<_, 256>::new();
 //!
 //! let mut writer = buffer.try_lock().unwrap();
 //! let mut reader = buffer.reader();
@@ -38,6 +37,13 @@
 //!     }
 //! });
 //! ```
+//! # Important!
+//!
+//! It is also important to keep in mind, that slow readers will be overrun by the writer if they
+//! do not consume messages quickly enough. This can happen quite frequently if the buffer size is
+//! not large enough. It is advisable to test applications on a case-by-case basis and find a
+//! buffer size that is optimal to your use-case.
+//!
 
 #![warn(missing_docs)]
 #![cfg_attr(feature = "nightly", feature(const_ptr_write))]
@@ -290,16 +296,8 @@ struct Block<T: Copy> {
     message: UnsafeCell<MaybeUninit<T>>,
 }
 
-impl<T: Copy> Block<T> {
-    const fn new() -> Block<T> {
-        Block {
-            seq: AtomicUsize::new(0),
-            message: UnsafeCell::new(MaybeUninit::uninit()),
-        }
-    }
-}
-
 mod test {
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]
