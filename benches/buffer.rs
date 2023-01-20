@@ -3,9 +3,10 @@ use std::sync::atomic::AtomicUsize;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use lockfree::channel::spmc::create;
 use sling::RingBuffer;
-const BUF_LEN: usize = 4096 * 4;
+const BUF_LEN: usize = 2_usize.pow(18);
+const PAYLOAD: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
 const MAX_SPIN: usize = 128;
-const ELEMENTS: usize = 10_000;
+const ELEMENTS: usize = 100_000;
 
 fn push_pop_lockfree(t: usize) {
     let (mut writer, reader) = create();
@@ -37,13 +38,13 @@ fn push_pop_lockfree(t: usize) {
         }
 
         for _ in 0..black_box(ELEMENTS) {
-            writer.send(1);
+            writer.send(PAYLOAD);
         }
     });
 }
 
 fn push_pop_sling(t: usize) {
-    let queue = RingBuffer::<u8, BUF_LEN>::new();
+    let queue = RingBuffer::<_, BUF_LEN>::new();
     let mut writer = queue.try_lock().unwrap();
     let reader = queue.reader();
 
@@ -73,13 +74,13 @@ fn push_pop_sling(t: usize) {
         }
 
         for _ in 0..black_box(ELEMENTS) {
-            writer.push_back(1);
+            writer.push_back(PAYLOAD);
         }
     });
 }
 
 fn push_pop_sling_clone(t: usize) {
-    let queue = RingBuffer::<u8, BUF_LEN>::new();
+    let queue = RingBuffer::<_, BUF_LEN>::new();
     let mut writer = queue.try_lock().unwrap();
     let reader = queue.reader();
 
@@ -109,7 +110,7 @@ fn push_pop_sling_clone(t: usize) {
         }
 
         for _ in 0..black_box(ELEMENTS) {
-            writer.push_back(1);
+            writer.push_back([PAYLOAD]);
         }
     });
 }
@@ -126,5 +127,18 @@ fn bench(c: &mut Criterion) {
     })
 }
 
+fn bench_sling(c: &mut Criterion) {
+    let mut group = c.benchmark_group(format!("Bench Sling at Variable Threads"));
+
+    [1, 2, 4, 8, 16].into_iter().for_each(|t| {
+        group.bench_function(format!("Sling {} Threads", t), |b| {
+            b.iter(|| push_pop_sling(t))
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(benches, bench);
-criterion_main!(benches);
+criterion_group!(bench_variable_threads, bench_sling);
+
+criterion_main!(benches, bench_variable_threads);
