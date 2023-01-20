@@ -48,6 +48,8 @@
 #![warn(missing_docs)]
 #![cfg_attr(feature = "nightly", feature(const_ptr_write))]
 #![cfg_attr(feature = "nightly", feature(const_mut_refs))]
+#![cfg_attr(feature = "nightly", feature(const_ptr_read))]
+#![cfg_attr(feature = "nightly", feature(const_refs_to_cell))]
 
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
@@ -79,9 +81,16 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
     pub const fn new() -> RingBuffer<T, N> {
         // Initialize the array.
         let data: [Block<T>; N] = unsafe {
-            let mut data: [Block<T>; N] = MaybeUninit::uninit().assume_init();
+            let mut data: [MaybeUninit<Block<T>>; N] = MaybeUninit::uninit().assume_init();
             write_bytes(&mut data, 0, 1);
-            data
+
+            // This workaround is currently necessary, as `core::mem::transmute()` is not available
+            // for arrays whose length is specified by Const Generics.
+            let init = core::ptr::read(
+                (&data as *const [MaybeUninit<Block<T>>; N]).cast::<[Block<T>; N]>(),
+            );
+            core::mem::forget(data);
+            init
         };
 
         RingBuffer {
@@ -101,9 +110,16 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
     pub fn new() -> RingBuffer<T, N> {
         // Initialize the array.
         let data: [Block<T>; N] = unsafe {
-            let mut data: [Block<T>; N] = MaybeUninit::uninit().assume_init();
+            let mut data: [MaybeUninit<Block<T>>; N] = MaybeUninit::uninit().assume_init();
             write_bytes(&mut data, 0, 1);
-            data
+
+            // This workaround is currently necessary, as `core::mem::transmute()` is not available
+            // for arrays whose length is specified by Const Generics.
+            let init = core::ptr::read(
+                (&data as *const [MaybeUninit<Block<T>>; N]).cast::<[Block<T>; N]>(),
+            );
+            core::mem::forget(data);
+            init
         };
 
         RingBuffer {
