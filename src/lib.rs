@@ -308,9 +308,11 @@ impl<'write, T: Copy, const N: usize> WriteGuard<'write, T, N> {
     /// };
     /// ```
     pub fn push_back(&mut self, val: T) {
-        let index = self.buffer.start_write();
-        unsafe { write_volatile(self.buffer.data[index].message.get().cast(), val) };
-        self.buffer.end_write(index);
+        let i = self.buffer.start_write();
+
+        unsafe { write_volatile(self.buffer.data[i].message.get().cast(), val) };
+
+        self.buffer.end_write(i);
     }
 }
 
