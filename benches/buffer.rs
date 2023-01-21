@@ -1,12 +1,52 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use crossbeam::channel::{bounded, unbounded};
 use lockfree::channel::spmc::create;
 use sling::RingBuffer;
 const BUF_LEN: usize = 2_usize.pow(8);
 const PAYLOAD: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
+const THREADS: [usize; 4] = [1, 2, 4, 8];
 const MAX_SPIN: usize = 128;
 const ELEMENTS: usize = 100_000;
+
+fn push_pop_crossbeam(t: usize) {
+    let (writer, reader) = bounded(BUF_LEN);
+
+    let read = AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        let read = &read;
+        let reader = &reader;
+
+        for _ in 0..t {
+            s.spawn(move || loop {
+                let reader = reader.clone();
+
+                while let Ok(_) = reader.try_recv() {
+                    read.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                }
+
+                let mut counter = 0;
+
+                while reader.recv().is_err() && counter < MAX_SPIN {
+                    counter += 1;
+                    std::thread::yield_now();
+                }
+
+                if counter < MAX_SPIN {
+                    continue;
+                }
+
+                break;
+            });
+        }
+
+        for _ in 0..black_box(ELEMENTS) {
+            writer.try_send(PAYLOAD);
+            std::thread::yield_now();
+        }
+    });
+}
 
 fn push_pop_lockfree(t: usize) {
     let (mut writer, reader) = create();
@@ -38,8 +78,8 @@ fn push_pop_lockfree(t: usize) {
         }
 
         for _ in 0..black_box(ELEMENTS) {
-            std::thread::yield_now();
             writer.send(PAYLOAD);
+            std::thread::yield_now();
         }
     });
 }
@@ -75,8 +115,8 @@ fn push_pop_sling(t: usize) {
         }
 
         for _ in 0..black_box(ELEMENTS) {
-            std::thread::yield_now();
             writer.push_back(PAYLOAD);
+            std::thread::yield_now();
         }
     });
 }
@@ -112,8 +152,8 @@ fn push_pop_sling_clone(t: usize) {
         }
 
         for _ in 0..black_box(ELEMENTS) {
-            std::thread::yield_now();
             writer.push_back([PAYLOAD]);
+            std::thread::yield_now();
         }
     });
 }
@@ -146,18 +186,19 @@ fn sling_ping(t: usize) {
 
         w1.push_back(PAYLOAD);
         while let None = r2.pop_front() {
-            core::hint::spin_loop();
+            std::thread::yield_now();
         }
     });
 }
 
 fn bench(c: &mut Criterion) {
-    [1, 2, 4, 8, 16].into_iter().for_each(|t| {
+    THREADS.into_iter().for_each(|t| {
         let mut group = c.benchmark_group(format!("Bench {} Thread(s)", t));
 
         group.bench_function("Sling", |b| b.iter(|| push_pop_sling(t)));
         group.bench_function("Sling Cloned", |b| b.iter(|| push_pop_sling_clone(t)));
         group.bench_function("Lockfree Channel", |b| b.iter(|| push_pop_lockfree(t)));
+        // group.bench_function("Crossbeam Channel", |b| b.iter(|| push_pop_crossbeam(t)));
 
         group.finish();
     })
@@ -166,7 +207,7 @@ fn bench(c: &mut Criterion) {
 fn bench_sling(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("Bench Sling at Variable Threads"));
 
-    [1, 2, 4, 8, 16].into_iter().for_each(|t| {
+    THREADS.into_iter().for_each(|t| {
         group.bench_function(format!("Sling {} Threads", t), |b| {
             b.iter(|| push_pop_sling(t))
         });
@@ -177,7 +218,7 @@ fn bench_sling(c: &mut Criterion) {
 fn bench_ping(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("Bench Sling Ping Variable Threads"));
 
-    [1, 2, 4, 8, 16].into_iter().for_each(|t| {
+    THREADS.into_iter().for_each(|t| {
         group.bench_function(format!("Sling {} Threads", t), |b| b.iter(|| sling_ping(t)));
     });
     group.finish();
