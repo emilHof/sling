@@ -46,6 +46,7 @@
 //!
 
 #![warn(missing_docs)]
+#![no_std]
 #![cfg_attr(feature = "nightly", feature(const_ptr_write))]
 #![cfg_attr(feature = "nightly", feature(const_mut_refs))]
 #![cfg_attr(feature = "nightly", feature(const_ptr_read))]
@@ -56,7 +57,7 @@ use core::fmt::{Debug, Display};
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 use core::ptr::{read_volatile, write_bytes, write_volatile};
-use core::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// A fixed-size, non-write-blocking, ring buffer, that behaves like a
 /// SPMC queue and can be safely shared across threads.
@@ -67,9 +68,9 @@ pub struct RingBuffer<T: Copy, const N: usize> {
     // what else goes here?
     // version?
     // TODO(Emil): Can we make sure this is properly aligned for cache loads?
-    locked: AtomicBool,
-    version: AtomicUsize,
-    index: AtomicUsize,
+    locked: Padded<AtomicBool>,
+    version: Padded<AtomicUsize>,
+    index: Padded<AtomicUsize>,
     data: [Block<T>; N],
 }
 
@@ -96,9 +97,9 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
         };
 
         RingBuffer {
-            locked: AtomicBool::new(false),
-            version: AtomicUsize::new(0),
-            index: AtomicUsize::new(0),
+            locked: Padded(AtomicBool::new(false)),
+            version: Padded(AtomicUsize::new(0)),
+            index: Padded(AtomicUsize::new(0)),
             data,
         }
     }
@@ -125,9 +126,9 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
         };
 
         RingBuffer {
-            locked: AtomicBool::new(false),
-            version: AtomicUsize::new(0),
-            index: AtomicUsize::new(0),
+            locked: Padded(AtomicBool::new(false)),
+            version: Padded(AtomicUsize::new(0)),
+            index: Padded(AtomicUsize::new(0)),
             data,
         }
     }
@@ -162,9 +163,9 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
     #[inline]
     pub fn reader(&self) -> ReadGuard<'_, T, N> {
         ReadGuard {
-            buffer: self,
-            index: AtomicUsize::new(0),
-            version: AtomicUsize::new(self.version.load(Ordering::Acquire)),
+            buffer: Padded(&self),
+            index: Padded(AtomicUsize::new(0)),
+            version: Padded(AtomicUsize::new(self.version.load(Ordering::Relaxed))),
         }
     }
 
@@ -178,9 +179,9 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
         assert!(seq % 2 == 0);
 
         // Update the global version to be at newer than the current block version.
-        self.version.fetch_max(seq + 2, Ordering::Release);
-
-        fence(Ordering::Release);
+        let ver = self.version.load(Ordering::Relaxed);
+        self.version
+            .store(core::cmp::max(ver, seq + 2), Ordering::Relaxed);
 
         index
     }
@@ -201,19 +202,19 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
 /// on the queue. Distinct [RingBuffers](RingBuffer) do not share progress.
 #[derive(Debug)]
 pub struct ReadGuard<'read, T: Copy, const N: usize> {
-    buffer: &'read RingBuffer<T, N>,
-    index: AtomicUsize,
-    version: AtomicUsize,
+    buffer: Padded<&'read RingBuffer<T, N>>,
+    index: Padded<AtomicUsize>,
+    version: Padded<AtomicUsize>,
 }
 
-/// Clones a [RingBuffer](RingBuffer), creating a new one that does not share progress with the
-/// original [RingBuffer](RingBuffer).
+/// Clones a [`RingBuffer`], creating a new one that does not share progress with the
+/// original [`RingBuffer`].
 impl<'read, T: Copy, const N: usize> Clone for ReadGuard<'read, T, N> {
     fn clone(&self) -> Self {
         ReadGuard {
-            buffer: self.buffer,
-            index: AtomicUsize::new(self.index.load(Ordering::Acquire)),
-            version: AtomicUsize::new(self.version.load(Ordering::Relaxed)),
+            buffer: Padded(&self.buffer),
+            index: Padded(AtomicUsize::new(self.index.load(Ordering::Relaxed))),
+            version: Padded(AtomicUsize::new(self.version.load(Ordering::Relaxed))),
         }
     }
 }
@@ -225,55 +226,66 @@ impl<'read, T: Copy, const N: usize> ReadGuard<'read, T, N> {
     /// will still need to pop this for themselves.
     pub fn pop_front(&self) -> Option<T> {
         // Checks if data if we are currently caught up.
-        let i = self.check_version()?;
+        // This is acquire as we want to make sure that we are syncing up the readers version with
+        // the last increment of index. Otherwise we may end up reading old data.
+        let mut i = self.index.load(Ordering::Acquire);
 
         loop {
-            let seq1 = self.buffer.data[i].seq.load(Ordering::Acquire);
+            let ver = self.version.load(Ordering::Relaxed);
 
-            if seq1 & 1 != 0 {
-                // Spin until we messages is written.
-                core::hint::spin_loop();
-                continue;
-            }
+            // Ensures we are not reading old data, or data that is currently being written to.
+            // This is `Acquire` so we observed the write to data should seq1 == seq2.
+            let seq1 =
+                Self::check_version(self.buffer.data[i].seq.load(Ordering::Acquire), ver, i)?;
 
             // # Safety: We ensure validity of the read with the equality check later.
             let data: T = unsafe { read_volatile(self.buffer.data[i].message.get().cast()) };
 
-            fence(Ordering::Acquire);
+            let seq2 = self.buffer.data[i].seq.load(Ordering::Relaxed);
 
-            let seq2 = self.buffer.data[i].seq.load(Ordering::Acquire);
-
-            if seq1 == seq2 {
-                return Some(data);
+            if seq1 != seq2 {
+                continue;
             }
+
+            // On failure we end here, as we have an outdated version and thus are reading consumed
+            // data.
+            self.version
+                .compare_exchange(ver, seq2, Ordering::Relaxed, Ordering::Relaxed)
+                .ok()?;
+
+            // If this fails, someone has already read the data. This is the only time we should
+            // retry the loop.
+            // This is `Release` on store to ensure that the new version of the `ReadGuard` is
+            // observed by all sharing threads, and on failure we `Acquire` to ensure we get the
+            // latest version.
+            if let Err(new) =
+                self.index
+                    .compare_exchange(i, (i + 1) % N, Ordering::Release, Ordering::Acquire)
+            {
+                i = new;
+                continue;
+            }
+
+            return Some(data);
         }
     }
 
     /// Checks if we are reading data we have already consumed.
     #[inline]
-    fn check_version(&self) -> Option<usize> {
+    fn check_version(mut seq: usize, ver: usize, i: usize) -> Option<usize> {
         // The current version of the
-        let mut i = self.index.load(Ordering::Acquire);
-
-        loop {
-            let ver = self.version.load(Ordering::Relaxed);
-            let seq = self.buffer.data[i].seq.load(Ordering::Acquire) & (usize::MAX - 1);
-
-            // If we are in the beginning of the array and the version is current, that means
-            if (i == 0 && seq == ver) || seq < ver {
-                return None;
-            }
-
-            self.version.fetch_max(seq, Ordering::Relaxed);
-
-            match self
-                .index
-                .compare_exchange(i, (i + 1) % N, Ordering::Release, Ordering::Acquire)
-            {
-                Err(new) => i = new,
-                Ok(i) => return Some(i),
-            }
+        if seq & 1 != 0 {
+            // Spin until we messages is written.
+            return None;
         }
+
+        seq = seq & (usize::MAX - 1);
+
+        if (i == 0 && seq == ver) || seq < ver {
+            return None;
+        }
+
+        Some(seq)
     }
 }
 
@@ -353,10 +365,6 @@ impl<T> Padded<T> {
     const fn new(t: T) -> Self {
         Padded(t)
     }
-
-    fn into_inner(self) -> T {
-        self.0
-    }
 }
 
 impl<T> Deref for Padded<T> {
@@ -377,7 +385,7 @@ impl<T> Debug for Padded<T>
 where
     T: Debug,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_fmt(format_args!("{:?}", self.0))
     }
 }
@@ -386,7 +394,7 @@ impl<T> Display for Padded<T>
 where
     T: Display,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_fmt(format_args!("{}", self.0))
     }
 }
@@ -400,6 +408,9 @@ impl<T> From<T> for Padded<T> {
 mod test {
     #[allow(unused_imports)]
     use super::*;
+    extern crate std;
+    #[allow(unused_imports)]
+    use std::println;
 
     #[test]
     fn test_nightly() {

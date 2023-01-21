@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use lockfree::channel::spmc::create;
 use sling::RingBuffer;
-const BUF_LEN: usize = 2_usize.pow(12);
+const BUF_LEN: usize = 2_usize.pow(8);
 const PAYLOAD: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
 const MAX_SPIN: usize = 128;
 const ELEMENTS: usize = 100_000;
@@ -26,7 +26,7 @@ fn push_pop_lockfree(t: usize) {
 
                 while reader.recv().is_err() && counter < MAX_SPIN {
                     counter += 1;
-                    core::hint::spin_loop();
+                    std::thread::yield_now();
                 }
 
                 if counter < MAX_SPIN {
@@ -38,6 +38,7 @@ fn push_pop_lockfree(t: usize) {
         }
 
         for _ in 0..black_box(ELEMENTS) {
+            std::thread::yield_now();
             writer.send(PAYLOAD);
         }
     });
@@ -62,7 +63,7 @@ fn push_pop_sling(t: usize) {
 
                 while reader.pop_front().is_none() && counter < MAX_SPIN {
                     counter += 1;
-                    core::hint::spin_loop();
+                    std::thread::yield_now();
                 }
 
                 if counter < MAX_SPIN {
@@ -74,6 +75,7 @@ fn push_pop_sling(t: usize) {
         }
 
         for _ in 0..black_box(ELEMENTS) {
+            std::thread::yield_now();
             writer.push_back(PAYLOAD);
         }
     });
@@ -98,7 +100,7 @@ fn push_pop_sling_clone(t: usize) {
 
                 while reader.pop_front().is_none() && counter < MAX_SPIN {
                     counter += 1;
-                    core::hint::spin_loop();
+                    std::thread::yield_now();
                 }
 
                 if counter < MAX_SPIN {
@@ -110,6 +112,7 @@ fn push_pop_sling_clone(t: usize) {
         }
 
         for _ in 0..black_box(ELEMENTS) {
+            std::thread::yield_now();
             writer.push_back([PAYLOAD]);
         }
     });
@@ -134,9 +137,9 @@ fn sling_ping(t: usize) {
                 while !pinged.load(std::sync::atomic::Ordering::Acquire) {
                     if let Some(_) = r1.pop_front() {
                         q2.try_lock().unwrap().push_back(PAYLOAD);
+                        pinged.store(true, std::sync::atomic::Ordering::Release);
                     }
-
-                    pinged.store(true, std::sync::atomic::Ordering::Release);
+                    std::thread::yield_now();
                 }
             });
         }
@@ -184,4 +187,4 @@ criterion_group!(benches, bench);
 criterion_group!(bench_variable_threads, bench_sling);
 criterion_group!(bench_ping_threads, bench_ping);
 
-criterion_main!(/*benches, bench_variable_threads, */ bench_ping_threads);
+criterion_main!(benches, bench_variable_threads, bench_ping_threads);
