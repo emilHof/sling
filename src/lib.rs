@@ -52,7 +52,9 @@
 #![cfg_attr(feature = "nightly", feature(const_refs_to_cell))]
 
 use core::cell::UnsafeCell;
+use core::fmt::{Debug, Display};
 use core::mem::MaybeUninit;
+use core::ops::{Deref, DerefMut};
 use core::ptr::{read_volatile, write_bytes, write_volatile};
 use core::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 
@@ -310,6 +312,89 @@ impl<'write, T: Copy, const N: usize> Drop for WriteGuard<'write, T, N> {
 struct Block<T: Copy> {
     seq: AtomicUsize,
     message: UnsafeCell<MaybeUninit<T>>,
+}
+
+/// Aligns its contents to the cache line.
+#[cfg_attr(
+    any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+    ),
+    repr(align(128))
+)]
+#[cfg_attr(
+    any(
+        target_arch = "arm",
+        target_arch = "mips",
+        target_arch = "mips64",
+        target_arch = "riscv64",
+    ),
+    repr(align(32))
+)]
+#[cfg_attr(target_arch = "s390x", repr(align(256)))]
+#[cfg_attr(
+    not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+        target_arch = "arm",
+        target_arch = "mips",
+        target_arch = "mips64",
+        target_arch = "riscv64",
+        target_arch = "s390x",
+    )),
+    repr(align(64))
+)]
+#[derive(Clone, Copy, Default, Hash, PartialEq, Eq)]
+struct Padded<T>(T);
+
+impl<T> Padded<T> {
+    const fn new(t: T) -> Self {
+        Padded(t)
+    }
+
+    fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl<T> Deref for Padded<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Padded<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T> Debug for Padded<T>
+where
+    T: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{:?}", self.0))
+    }
+}
+
+impl<T> Display for Padded<T>
+where
+    T: Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}", self.0))
+    }
+}
+
+impl<T> From<T> for Padded<T> {
+    fn from(value: T) -> Self {
+        Padded::new(value)
+    }
 }
 
 mod test {
