@@ -14,7 +14,7 @@ fn push_pop_sling(t: usize) {
         let reader = &reader;
         for _ in 0..t {
             s.spawn(move || loop {
-                while let Some(_) = reader.pop_front() {}
+                while reader.pop_front().is_some() {}
 
                 std::thread::yield_now();
 
