@@ -186,7 +186,7 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
     #[inline]
     pub fn try_lock(&self) -> Result<WriteGuard<'_, T, N>, ()> {
         if !self.locked.swap(true, Ordering::Acquire) {
-            Ok(WriteGuard { buffer: &self })
+            Ok(WriteGuard { buffer: self })
         } else {
             Err(())
         }
@@ -204,7 +204,7 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
     #[inline]
     pub fn reader(&self) -> ReadGuard<'_, T, N> {
         ReadGuard {
-            buffer: Padded(&self),
+            buffer: Padded(self),
             index: Padded(AtomicUsize::new(0)),
             version: Padded(AtomicUsize::new(self.version.load(Ordering::Relaxed))),
         }
@@ -324,7 +324,7 @@ impl<'read, T: Copy, const N: usize> ReadGuard<'read, T, N> {
             return None;
         }
 
-        seq = seq & (usize::MAX - 1);
+        seq &= usize::MAX - 1;
 
         if (i == 0 && seq == ver) || seq < ver {
             return None;

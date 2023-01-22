@@ -22,7 +22,7 @@ fn push_pop_crossbeam(t: usize) {
             s.spawn(move || loop {
                 let reader = reader.clone();
 
-                while let Ok(_) = reader.try_recv() {
+                while reader.try_recv().is_ok() {
                     read.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 }
 
@@ -58,7 +58,7 @@ fn push_pop_lockfree(t: usize) {
 
         for _ in 0..t {
             s.spawn(move || loop {
-                while let Ok(_) = reader.recv() {
+                while reader.recv().is_ok() {
                     read.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 }
 
@@ -95,7 +95,7 @@ fn push_pop_sling(t: usize) {
         let read = &read;
         for _ in 0..t {
             s.spawn(move || loop {
-                while let Some(_) = reader.pop_front() {
+                while reader.pop_front().is_some() {
                     read.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 }
 
@@ -132,7 +132,7 @@ fn push_pop_sling_clone(t: usize) {
         for _ in 0..t {
             s.spawn(|| loop {
                 let reader = reader.clone();
-                while let Some(_) = reader.pop_front() {
+                while reader.pop_front().is_some() {
                     read.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 }
 
@@ -175,7 +175,7 @@ fn sling_ping(t: usize) {
         for _ in 0..t {
             s.spawn(|| {
                 while !pinged.load(std::sync::atomic::Ordering::Acquire) {
-                    if let Some(_) = r1.pop_front() {
+                    if r1.pop_front().is_some() {
                         q2.try_lock().unwrap().push_back(PAYLOAD);
                         pinged.store(true, std::sync::atomic::Ordering::Release);
                     }
@@ -185,7 +185,7 @@ fn sling_ping(t: usize) {
         }
 
         w1.push_back(PAYLOAD);
-        while let None = r2.pop_front() {
+        while r2.pop_front().is_none() {
             std::thread::yield_now();
         }
     });
@@ -205,7 +205,7 @@ fn bench(c: &mut Criterion) {
 }
 
 fn bench_sling(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!("Bench Sling at Variable Threads"));
+    let mut group = c.benchmark_group("Bench Sling at Variable Threads".to_string());
 
     THREADS.into_iter().for_each(|t| {
         group.bench_function(format!("Sling {} Threads", t), |b| {
@@ -216,7 +216,7 @@ fn bench_sling(c: &mut Criterion) {
 }
 
 fn bench_ping(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!("Bench Sling Ping Variable Threads"));
+    let mut group = c.benchmark_group("Bench Sling Ping Variable Threads".to_string());
 
     THREADS.into_iter().for_each(|t| {
         group.bench_function(format!("Sling {} Threads", t), |b| b.iter(|| sling_ping(t)));
