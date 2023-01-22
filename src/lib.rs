@@ -52,12 +52,18 @@
 #![cfg_attr(feature = "nightly", feature(const_ptr_read))]
 #![cfg_attr(feature = "nightly", feature(const_refs_to_cell))]
 
+#[cfg(not(loom))]
 use core::cell::UnsafeCell;
 use core::fmt::{Debug, Display};
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 use core::ptr::{read_volatile, write_bytes, write_volatile};
+#[cfg(not(loom))]
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+#[cfg(loom)]
+use loom::cell::UnsafeCell;
+#[cfg(loom)]
+use loom::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// A fixed-size, non-write-blocking, ring buffer, that behaves like a
 /// SPMC queue and can be safely shared across threads.
@@ -81,6 +87,7 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
     /// Const constructor that only works on nightly with this crates `nightly` feature
     /// enabled. Constructs an empty queue of fixed length.
     #[cfg(feature = "nightly")]
+    #[cfg(not(loom))]
     pub const fn new() -> RingBuffer<T, N> {
         // Initialize the array.
         let data: [Block<T>; N] = unsafe {
@@ -110,11 +117,45 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
     /// let buffer: RingBuffer<[u8; 16], 1024> = RingBuffer::new();
     /// ```
     #[cfg(not(feature = "nightly"))]
+    #[cfg(not(loom))]
     pub fn new() -> RingBuffer<T, N> {
         // Initialize the array.
         let data: [Block<T>; N] = unsafe {
             let mut data: [MaybeUninit<Block<T>>; N] = MaybeUninit::uninit().assume_init();
             write_bytes(&mut data, 0, 1);
+
+            // This workaround is currently necessary, as `core::mem::transmute()` is not available
+            // for arrays whose length is specified by Const Generics.
+            let init = core::ptr::read(
+                (&data as *const [MaybeUninit<Block<T>>; N]).cast::<[Block<T>; N]>(),
+            );
+            core::mem::forget(data);
+            init
+        };
+
+        RingBuffer {
+            locked: Padded(AtomicBool::new(false)),
+            version: Padded(AtomicUsize::new(0)),
+            index: Padded(AtomicUsize::new(0)),
+            data,
+        }
+    }
+
+    /// Loom has special types that need to be initialized differently.
+    #[cfg(loom)]
+    pub fn new() -> RingBuffer<T, N> {
+        // Initialize the array.
+        let data: [Block<T>; N] = unsafe {
+            let mut data: [MaybeUninit<Block<T>>; N] = MaybeUninit::uninit().assume_init();
+            for b in data.iter_mut() {
+                core::ptr::write(
+                    (b as *mut MaybeUninit<Block<T>>).cast::<Block<T>>(),
+                    Block {
+                        seq: AtomicUsize::new(0),
+                        message: UnsafeCell::new(MaybeUninit::uninit().assume_init()),
+                    },
+                )
+            }
 
             // This workaround is currently necessary, as `core::mem::transmute()` is not available
             // for arrays whose length is specified by Const Generics.
@@ -239,6 +280,7 @@ impl<'read, T: Copy, const N: usize> ReadGuard<'read, T, N> {
                 Self::check_version(self.buffer.data[i].seq.load(Ordering::Acquire), ver, i)?;
 
             // # Safety: We ensure validity of the read with the equality check later.
+            #[cfg(not(loom))]
             let data: T = unsafe { read_volatile(self.buffer.data[i].message.get().cast()) };
 
             let seq2 = self.buffer.data[i].seq.load(Ordering::Relaxed);
@@ -266,7 +308,10 @@ impl<'read, T: Copy, const N: usize> ReadGuard<'read, T, N> {
                 continue;
             }
 
+            #[cfg(not(loom))]
             return Some(data);
+            #[cfg(loom)]
+            return None;
         }
     }
 
@@ -310,7 +355,17 @@ impl<'write, T: Copy, const N: usize> WriteGuard<'write, T, N> {
     pub fn push_back(&mut self, val: T) {
         let i = self.buffer.start_write();
 
-        unsafe { write_volatile(self.buffer.data[i].message.get().cast(), val) };
+        #[cfg(not(loom))]
+        unsafe {
+            write_volatile(self.buffer.data[i].message.get().cast(), val)
+        };
+
+        #[cfg(loom)]
+        unsafe {
+            self.buffer.data[i]
+                .message
+                .with_mut(|p| write_volatile(p.cast(), val))
+        };
 
         self.buffer.end_write(i);
     }
@@ -322,10 +377,17 @@ impl<'write, T: Copy, const N: usize> Drop for WriteGuard<'write, T, N> {
     }
 }
 
-#[derive(Debug)]
 struct Block<T: Copy> {
     seq: AtomicUsize,
     message: UnsafeCell<MaybeUninit<T>>,
+}
+
+impl<T: Copy> Debug for Block<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Block")
+            .field("seq", &self.seq.load(Ordering::Relaxed))
+            .finish()
+    }
 }
 
 /// Aligns its contents to the cache line.

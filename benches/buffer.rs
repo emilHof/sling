@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use crossbeam::channel::{bounded, unbounded};
+use crossbeam::channel::bounded;
 use lockfree::channel::spmc::create;
 use sling::RingBuffer;
 const BUF_LEN: usize = 2_usize.pow(8);
