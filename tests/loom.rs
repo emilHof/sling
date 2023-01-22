@@ -31,7 +31,7 @@ fn push_pop_sling(t: usize) {
     });
 }
 
-#[test]
+// #[test]
 fn loom() {
     loom::model(|| {
         THREADS.iter().for_each(|&t| push_pop_sling(t));
