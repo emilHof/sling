@@ -6,7 +6,7 @@ use lockfree::channel::spmc::create;
 use sling::RingBuffer;
 const BUF_LEN: usize = 2_usize.pow(8);
 const PAYLOAD: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
-const THREADS: [usize; 5] = [1, 2, 4, 8, 16];
+const THREADS: [usize; 4] = [1, 2, 4, 8];
 const MAX_SPIN: usize = 128;
 const ELEMENTS: usize = 100_000;
 

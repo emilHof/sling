@@ -44,3 +44,10 @@ It is also important to keep in mind, that slow readers will be overrun by the w
 do not consume messages quickly enough. This can happen quite frequently if the buffer size is
 not large enough. It is advisable to test applications on a case-by-case basis and find a
 buffer size that is optimal to your use-case.
+
+## Benchmarks
+
+Ping speeds compared to [Crossbeam-Channel's](https://crates.io/crates/crossbeam-channel) mpmc
+channel and [lockfree's](https://crates.io/crates/lockfree) spmc channel.
+
+![violin-plot](./violin.svg)
