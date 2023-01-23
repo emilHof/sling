@@ -51,3 +51,5 @@ Ping speeds compared to [Crossbeam-Channel's](https://crates.io/crates/crossbeam
 channel and [lockfree's](https://crates.io/crates/lockfree) spmc channel.
 
 ![violin-plot](<./target/criterion/reports/Bench Sling Ping Variable Threads/violin.svg>)
+**Disclaimer**: These benchmarks were performed on a personal computer and may not be prepresentative
+of relative performance on other computers. 
