@@ -13,7 +13,7 @@ one. If two threads each use a separate `ReadGuard`, they
 will be able to read the same messages.
 
 ```rust
-# use sling::*;
+use sling::*;
 
 let buffer = RingBuffer::<_, 256>::new();
 
