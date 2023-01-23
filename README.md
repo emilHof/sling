@@ -50,4 +50,4 @@ buffer size that is optimal to your use-case.
 Ping speeds compared to [Crossbeam-Channel's](https://crates.io/crates/crossbeam-channel) mpmc
 channel and [lockfree's](https://crates.io/crates/lockfree) spmc channel.
 
-![violin-plot](<./target/criterion/reports/Bench\ Sling\ Ping\ Variable\ Threads/violin.svg>)
+![violin-plot](<./target/criterion/reports/Bench Sling Ping Variable Threads/violin.svg>)
