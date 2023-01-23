@@ -239,6 +239,12 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
     }
 }
 
+impl<T: Copy, const N: usize> core::clone::Clone for RingBuffer<T, N> {
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
+
 /// Shared read access to its buffer. When multiple threads consume from the
 /// [`RingBuffer`] throught the same [`SharedReader`], they will share progress
 /// on the queue. Distinct [`RingBuffers`] do not share progress.
