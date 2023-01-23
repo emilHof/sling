@@ -54,6 +54,7 @@
 
 #[cfg(not(loom))]
 use core::cell::UnsafeCell;
+use core::default::Default;
 use core::fmt::{Debug, Display};
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
@@ -78,6 +79,12 @@ pub struct RingBuffer<T: Copy, const N: usize> {
     version: Padded<AtomicUsize>,
     index: Padded<AtomicUsize>,
     data: [Block<T>; N],
+}
+
+impl<T: Copy, const N: usize> Default for RingBuffer<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 unsafe impl<T: Copy, const N: usize> Send for RingBuffer<T, N> {}
@@ -236,12 +243,6 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
 
         // Ensure a consistent state.
         assert!(seq % 2 == 1);
-    }
-}
-
-impl<T: Copy, const N: usize> core::clone::Clone for RingBuffer<T, N> {
-    fn clone(&self) -> Self {
-        Self::new()
     }
 }
 
