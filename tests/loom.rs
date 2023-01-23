@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use sling::RingBuffer;
 
 const BUF_LEN: usize = 2_usize.pow(7);

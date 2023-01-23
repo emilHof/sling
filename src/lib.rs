@@ -5,11 +5,11 @@
 //! # Usage
 //!
 //! There are two ways of consuming from the queue. If threads share a
-//! [ReadGuard](ReadGuard) through a shared reference, they will steal
+//! [`SharedReader`] through a shared reference, they will steal
 //! queue items from one anothers such that no two threads will read the
-//! same message. When a [ReadGuard](ReadGuard) is cloned, the new
-//! [ReadGuard](ReadGuard)'s reading progress will no longer affect the other
-//! one. If two threads each use a separate [ReadGuard](ReadGuard), they
+//! same message. When a [`SharedReader`] is cloned, the new
+//! [`SharedReader`]'s reading progress will no longer affect the other
+//! one. If two threads each use a separate [`SharedReader`], they
 //! will be able to read the same messages.
 //!
 //! ```rust
@@ -174,8 +174,8 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
         }
     }
 
-    /// Tries to acquire the [RingBuffer's](RingBuffer) [WriteGuard](WriteGuard). As there can
-    /// only ever be one thread holding a [WriteGuard](WriteGuard), this fails if another thread is
+    /// Tries to acquire the [`RingBuffer's`] [`WriteGuard`]. As there can
+    /// only ever be one thread holding a [`WriteGuard`], this fails if another thread is
     /// already holding the lock.
     /// ```rust
     /// # use sling::*;
@@ -192,8 +192,9 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
         }
     }
 
-    /// Creates a new [ReadGuard](ReadGuard) which provides shared read access of the queue. The
-    /// progress of this [ReadGuard](ReadGuard) is not affected by other [ReadGuards](ReadGuard)
+    /// Creates a new [`SharedReader`] which provides shared read access of the queue. The
+    /// progress of this [`SharedReader`] is not affected by other
+    /// [`SharedReader`]s.
     /// and does not affect them in turn.
     /// ```rust
     /// # use sling::*;
@@ -202,8 +203,8 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
     /// let reader = buffer.reader();
     /// ```
     #[inline]
-    pub fn reader(&self) -> ReadGuard<'_, T, N> {
-        ReadGuard {
+    pub fn reader(&self) -> SharedReader<'_, T, N> {
+        SharedReader {
             buffer: Padded(self),
             index: Padded(AtomicUsize::new(0)),
             version: Padded(AtomicUsize::new(self.version.load(Ordering::Relaxed))),
@@ -239,10 +240,10 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
 }
 
 /// Shared read access to its buffer. When multiple threads consume from the
-/// [RingBuffer](RingBuffer) throught the same [ReadGuard](ReadGuard), they will share progress
-/// on the queue. Distinct [RingBuffers](RingBuffer) do not share progress.
+/// [`RingBuffer`] throught the same [`SharedReader`], they will share progress
+/// on the queue. Distinct [`RingBuffers`] do not share progress.
 #[derive(Debug)]
-pub struct ReadGuard<'read, T: Copy, const N: usize> {
+pub struct SharedReader<'read, T: Copy, const N: usize> {
     buffer: Padded<&'read RingBuffer<T, N>>,
     index: Padded<AtomicUsize>,
     version: Padded<AtomicUsize>,
@@ -250,9 +251,9 @@ pub struct ReadGuard<'read, T: Copy, const N: usize> {
 
 /// Clones a [`RingBuffer`], creating a new one that does not share progress with the
 /// original [`RingBuffer`].
-impl<'read, T: Copy, const N: usize> Clone for ReadGuard<'read, T, N> {
+impl<'read, T: Copy, const N: usize> Clone for SharedReader<'read, T, N> {
     fn clone(&self) -> Self {
-        ReadGuard {
+        SharedReader {
             buffer: Padded(&self.buffer),
             index: Padded(AtomicUsize::new(self.index.load(Ordering::Relaxed))),
             version: Padded(AtomicUsize::new(self.version.load(Ordering::Relaxed))),
@@ -260,9 +261,9 @@ impl<'read, T: Copy, const N: usize> Clone for ReadGuard<'read, T, N> {
     }
 }
 
-unsafe impl<'read, T: Copy, const N: usize> Send for ReadGuard<'read, T, N> {}
+unsafe impl<'read, T: Copy, const N: usize> Send for SharedReader<'read, T, N> {}
 
-impl<'read, T: Copy, const N: usize> ReadGuard<'read, T, N> {
+impl<'read, T: Copy, const N: usize> SharedReader<'read, T, N> {
     /// Pops the next element from the front. The element is only popped for us and other threads
     /// will still need to pop this for themselves.
     pub fn pop_front(&self) -> Option<T> {
@@ -279,6 +280,12 @@ impl<'read, T: Copy, const N: usize> ReadGuard<'read, T, N> {
             let seq1 =
                 Self::check_version(self.buffer.data[i].seq.load(Ordering::Acquire), ver, i)?;
 
+            // We cannot test the this part of the process with `loom`, as this operation is `UB`
+            // if data is written too while we are reading it; yet, due to the nature of seqlock,
+            // we discard the `UB` reads. Future versions of the compiler may optimize this code in
+            // a way that allows `UB` reads to leak past the seqlock, but currently this
+            // implementation is sane.
+            //
             // # Safety: We ensure validity of the read with the equality check later.
             #[cfg(not(loom))]
             let data: T = unsafe { read_volatile(self.buffer.data[i].message.get().cast()) };
@@ -297,7 +304,7 @@ impl<'read, T: Copy, const N: usize> ReadGuard<'read, T, N> {
 
             // If this fails, someone has already read the data. This is the only time we should
             // retry the loop.
-            // This is `Release` on store to ensure that the new version of the `ReadGuard` is
+            // This is `Release` on store to ensure that the new version of the `SharedReader` is
             // observed by all sharing threads, and on failure we `Acquire` to ensure we get the
             // latest version.
             if let Err(new) =
@@ -334,7 +341,7 @@ impl<'read, T: Copy, const N: usize> ReadGuard<'read, T, N> {
     }
 }
 
-/// Provides exclusive write access to the [RingBuffer](RingBuffer).
+/// Provides exclusive write access to the [`RingBuffer`].
 #[derive(Debug)]
 pub struct WriteGuard<'write, T: Copy, const N: usize> {
     buffer: &'write RingBuffer<T, N>,
