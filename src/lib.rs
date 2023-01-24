@@ -284,8 +284,17 @@ impl<'read, T: Copy, const N: usize> SharedReader<'read, T, N> {
 
             // Ensures we are not reading old data, or data that is currently being written to.
             // This is `Acquire` so we observed the write to data should seq1 == seq2.
-            let seq1 =
-                Self::check_version(self.buffer.data[i].seq.load(Ordering::Acquire), ver, i)?;
+            let seq1 = unsafe {
+                Self::check_version(
+                    self.buffer
+                        .data
+                        .get_unchecked(i)
+                        .seq
+                        .load(Ordering::Acquire),
+                    ver,
+                    i,
+                )?
+            };
 
             // We cannot test the this part of the process with `loom`, as this operation is `UB`
             // if data is written too while we are reading it; yet, due to the nature of seqlock,
@@ -295,9 +304,16 @@ impl<'read, T: Copy, const N: usize> SharedReader<'read, T, N> {
             //
             // # Safety: We ensure validity of the read with the equality check later.
             #[cfg(not(loom))]
-            let data: T = unsafe { read_volatile(self.buffer.data[i].message.get().cast()) };
+            let data: T =
+                unsafe { read_volatile(self.buffer.data.get_unchecked(i).message.get().cast()) };
 
-            let seq2 = self.buffer.data[i].seq.load(Ordering::Relaxed);
+            let seq2 = unsafe {
+                self.buffer
+                    .data
+                    .get_unchecked(i)
+                    .seq
+                    .load(Ordering::Relaxed)
+            };
 
             if seq1 != seq2 {
                 continue;
