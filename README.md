@@ -53,3 +53,36 @@ channel and [lockfree's](https://crates.io/crates/lockfree) spmc channel.
 ![violin-plot](<./target/criterion/reports/Bench Sling Ping Variable Threads/violin.svg>)
 **Disclaimer**: These benchmarks were performed on a personal computer and may not be prepresentative
 of relative performance on other computers. 
+
+Specifications of the benchmarking system:
+```
+Architecture:            x86_64
+  CPU op-mode(s):        32-bit, 64-bit
+  Address sizes:         39 bits physical, 48 bits virtual
+  Byte Order:            Little Endian
+CPU(s):                  16
+  On-line CPU(s) list:   0-15
+Vendor ID:               GenuineIntel
+  Model name:            Intel(R) Core(TM) i7-10700K CPU @ 3.80GHz
+    CPU family:          6
+    Model:               165
+    Thread(s) per core:  2
+    Core(s) per socket:  8
+    Socket(s):           1
+    Stepping:            5
+    CPU(s) scaling MHz:  68%
+    CPU max MHz:         5100.0000
+    CPU min MHz:         800.0000
+    BogoMIPS:            7602.45
+    
+Virtualization features:
+  Virtualization:        VT-x
+Caches (sum of all):
+  L1d:                   256 KiB (8 instances)
+  L1i:                   256 KiB (8 instances)
+  L2:                    2 MiB (8 instances)
+  L3:                    16 MiB (1 instance)
+NUMA:
+  NUMA node(s):          1
+  NUMA node0 CPU(s):     0-15
+  ```
