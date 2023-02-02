@@ -23,6 +23,7 @@ criterion = "0.4"
 lockfree = "0.5"
 crossbeam = "0.8"
 loom = "0.5"
+zsling = "0.1.1"
 
 [target.'cfg(loom)'.dependencies]
 loom = "0.5"

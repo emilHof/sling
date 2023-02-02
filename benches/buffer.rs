@@ -4,6 +4,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use crossbeam::channel::{bounded, unbounded};
 use lockfree::channel::spmc::create;
 use sling::RingBuffer;
+use zsling::RingBuffer as ZBuffer;
 const BUF_LEN: usize = 2_usize.pow(8);
 const PAYLOAD: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
 const THREADS: [usize; 4] = [1, 2, 4, 8];
@@ -220,6 +221,39 @@ fn crossbeam_ping(t: usize) {
     });
 }
 
+fn zsling_ping(t: usize) {
+    let q1 = ZBuffer::new();
+    let q2 = ZBuffer::new();
+
+    let mut w1 = q1.try_lock().unwrap();
+    let r1 = q1.reader();
+    let r2 = q2.reader();
+
+    let pinged = AtomicBool::new(false);
+
+    std::thread::scope(|s| {
+        let r1 = &r1;
+        let pinged = &pinged;
+
+        for _ in 0..t {
+            s.spawn(|| {
+                while !pinged.load(std::sync::atomic::Ordering::Acquire) {
+                    if r1.pop_front().is_some() {
+                        q2.try_lock().unwrap().push_back(PAYLOAD);
+                        pinged.store(true, std::sync::atomic::Ordering::Release);
+                    }
+                    std::thread::yield_now();
+                }
+            });
+        }
+
+        w1.push_back(PAYLOAD);
+        while r2.pop_front().is_none() {
+            std::thread::yield_now();
+        }
+    });
+}
+
 fn lockfree_ping(t: usize) {
     let (mut w1, r1) = create();
     let (w2, r2) = create();
@@ -282,6 +316,7 @@ fn bench_ping(c: &mut Criterion) {
 
     THREADS.into_iter().for_each(|t| {
         group.bench_function(format!("Sling {t} Threads"), |b| b.iter(|| sling_ping(t)));
+        group.bench_function(format!("ZSling {t} Threads"), |b| b.iter(|| zsling_ping(t)));
         group.bench_function(format!("Crossbeam {t} Threads"), |b| {
             b.iter(|| crossbeam_ping(t))
         });
