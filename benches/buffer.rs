@@ -1,4 +1,7 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::{
+    fmt::format,
+    sync::atomic::{AtomicBool, AtomicUsize},
+};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use crossbeam::channel::{bounded, unbounded};
@@ -29,7 +32,7 @@ fn push_pop_crossbeam(t: usize) {
 
                 let mut counter = 0;
 
-                while reader.recv().is_err() && counter < MAX_SPIN {
+                while reader.try_recv().is_err() && counter < MAX_SPIN {
                     counter += 1;
                     std::thread::yield_now();
                 }
@@ -42,8 +45,10 @@ fn push_pop_crossbeam(t: usize) {
             });
         }
 
-        for _ in 0..black_box(ELEMENTS) {
-            writer.try_send(PAYLOAD);
+        for _ in 0..black_box(ELEMENTS / 20) {
+            for _ in 0..20 {
+                writer.try_send(PAYLOAD);
+            }
             std::thread::yield_now();
         }
     });
@@ -78,8 +83,10 @@ fn push_pop_lockfree(t: usize) {
             });
         }
 
-        for _ in 0..black_box(ELEMENTS) {
-            writer.send(PAYLOAD);
+        for _ in 0..black_box(ELEMENTS / 20) {
+            for _ in 0..20 {
+                writer.send(PAYLOAD);
+            }
             std::thread::yield_now();
         }
     });
@@ -115,8 +122,10 @@ fn push_pop_sling(t: usize) {
             });
         }
 
-        for _ in 0..black_box(ELEMENTS) {
-            writer.push_back(PAYLOAD);
+        for _ in 0..black_box(ELEMENTS / 20) {
+            for _ in 0..20 {
+                writer.push_back(PAYLOAD);
+            }
             std::thread::yield_now();
         }
     });
@@ -152,8 +161,49 @@ fn push_pop_sling_clone(t: usize) {
             });
         }
 
-        for _ in 0..black_box(ELEMENTS) {
-            writer.push_back([PAYLOAD]);
+        for _ in 0..black_box(ELEMENTS / 20) {
+            for _ in 0..20 {
+                writer.push_back([PAYLOAD]);
+            }
+            std::thread::yield_now();
+        }
+    });
+}
+
+fn push_pop_zsling(t: usize) {
+    let queue = ZBuffer::new();
+    let mut writer = queue.try_lock().unwrap();
+    let reader = queue.reader();
+
+    let read = AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        let reader = &reader;
+        let read = &read;
+        for _ in 0..t {
+            s.spawn(move || loop {
+                while reader.pop_front().is_some() {
+                    read.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                }
+
+                let mut counter = 0;
+
+                while reader.pop_front().is_none() && counter < MAX_SPIN {
+                    counter += 1;
+                    std::thread::yield_now();
+                }
+
+                if counter < MAX_SPIN {
+                    continue;
+                }
+
+                break;
+            });
+        }
+
+        for _ in 0..black_box(ELEMENTS / 20) {
+            for _ in 0..20 {
+                writer.push_back(PAYLOAD);
+            }
             std::thread::yield_now();
         }
     });
@@ -288,23 +338,34 @@ fn lockfree_ping(t: usize) {
 }
 
 fn bench(c: &mut Criterion) {
+    let mut group = c.benchmark_group(format!("Bench Throughput With Variable Threads"));
     THREADS.into_iter().for_each(|t| {
-        let mut group = c.benchmark_group(format!("Bench {t} Thread(s)"));
-
-        group.bench_function("Sling", |b| b.iter(|| push_pop_sling(t)));
-        group.bench_function("Sling Cloned", |b| b.iter(|| push_pop_sling_clone(t)));
-        group.bench_function("Lockfree Channel", |b| b.iter(|| push_pop_lockfree(t)));
-        // group.bench_function("Crossbeam Channel", |b| b.iter(|| push_pop_crossbeam(t)));
-
-        group.finish();
-    })
+        group.bench_function(format!("Sling {t} Thread(s)"), |b| {
+            b.iter(|| push_pop_sling(t))
+        });
+        /*
+        group.bench_function(format!("ZSling {t} Thread(s)"), |b| {
+            b.iter(|| push_pop_zsling(t))
+        });
+        group.bench_function(format!("Sling Cloned {t} Threads"), |b| {
+            b.iter(|| push_pop_sling_clone(t))
+        });
+        */
+        group.bench_function(format!("Crossbeam Channel {t} Thread(s)"), |b| {
+            b.iter(|| push_pop_crossbeam(t))
+        });
+        group.bench_function(format!("Lockfree Channel {t} Thread(s)"), |b| {
+            b.iter(|| push_pop_lockfree(t))
+        });
+    });
+    group.finish();
 }
 
 fn bench_sling(c: &mut Criterion) {
     let mut group = c.benchmark_group("Bench Sling at Variable Threads".to_string());
 
     THREADS.into_iter().for_each(|t| {
-        group.bench_function(format!("Sling {t} Threads"), |b| {
+        group.bench_function(format!("Sling {t} Thread(s)"), |b| {
             b.iter(|| push_pop_sling(t))
         });
     });
@@ -315,12 +376,12 @@ fn bench_ping(c: &mut Criterion) {
     let mut group = c.benchmark_group("Bench Sling Ping Variable Threads".to_string());
 
     THREADS.into_iter().for_each(|t| {
-        group.bench_function(format!("Sling {t} Threads"), |b| b.iter(|| sling_ping(t)));
-        group.bench_function(format!("ZSling {t} Threads"), |b| b.iter(|| zsling_ping(t)));
-        group.bench_function(format!("Crossbeam {t} Threads"), |b| {
+        group.bench_function(format!("Sling {t} Thread(s)"), |b| b.iter(|| sling_ping(t)));
+        // group.bench_function(format!("ZSling {t} Threads"), |b| b.iter(|| zsling_ping(t)));
+        group.bench_function(format!("Crossbeam {t} Thread(s)"), |b| {
             b.iter(|| crossbeam_ping(t))
         });
-        group.bench_function(format!("Lockfree {t} Threads"), |b| {
+        group.bench_function(format!("Lockfree {t} Thread(s)"), |b| {
             b.iter(|| lockfree_ping(t))
         });
     });
@@ -331,4 +392,7 @@ criterion_group!(benches, bench);
 criterion_group!(bench_variable_threads, bench_sling);
 criterion_group!(bench_ping_threads, bench_ping);
 
-criterion_main!(/*benches, bench_variable_threads, */ bench_ping_threads);
+criterion_main!(
+    benches,
+    /* bench_variable_threads, */ bench_ping_threads
+);
