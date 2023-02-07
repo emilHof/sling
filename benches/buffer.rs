@@ -1,13 +1,9 @@
-use std::{
-    fmt::format,
-    sync::atomic::{AtomicBool, AtomicUsize},
-};
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use crossbeam::channel::{bounded, unbounded};
 use lockfree::channel::spmc::create;
 use sling::RingBuffer;
-use zsling::RingBuffer as ZBuffer;
 const BUF_LEN: usize = 2_usize.pow(8);
 const PAYLOAD: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
 const THREADS: [usize; 4] = [1, 2, 4, 8];
@@ -170,45 +166,6 @@ fn push_pop_sling_clone(t: usize) {
     });
 }
 
-fn push_pop_zsling(t: usize) {
-    let queue = ZBuffer::new();
-    let mut writer = queue.try_lock().unwrap();
-    let reader = queue.reader();
-
-    let read = AtomicUsize::new(0);
-    std::thread::scope(|s| {
-        let reader = &reader;
-        let read = &read;
-        for _ in 0..t {
-            s.spawn(move || loop {
-                while reader.pop_front().is_some() {
-                    read.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                }
-
-                let mut counter = 0;
-
-                while reader.pop_front().is_none() && counter < MAX_SPIN {
-                    counter += 1;
-                    std::thread::yield_now();
-                }
-
-                if counter < MAX_SPIN {
-                    continue;
-                }
-
-                break;
-            });
-        }
-
-        for _ in 0..black_box(ELEMENTS / 20) {
-            for _ in 0..20 {
-                writer.push_back(PAYLOAD);
-            }
-            std::thread::yield_now();
-        }
-    });
-}
-
 fn sling_ping(t: usize) {
     let q1 = RingBuffer::<_, BUF_LEN>::new();
     let q2 = RingBuffer::<_, BUF_LEN>::new();
@@ -271,39 +228,6 @@ fn crossbeam_ping(t: usize) {
     });
 }
 
-fn zsling_ping(t: usize) {
-    let q1 = ZBuffer::new();
-    let q2 = ZBuffer::new();
-
-    let mut w1 = q1.try_lock().unwrap();
-    let r1 = q1.reader();
-    let r2 = q2.reader();
-
-    let pinged = AtomicBool::new(false);
-
-    std::thread::scope(|s| {
-        let r1 = &r1;
-        let pinged = &pinged;
-
-        for _ in 0..t {
-            s.spawn(|| {
-                while !pinged.load(std::sync::atomic::Ordering::Acquire) {
-                    if r1.pop_front().is_some() {
-                        q2.try_lock().unwrap().push_back(PAYLOAD);
-                        pinged.store(true, std::sync::atomic::Ordering::Release);
-                    }
-                    std::thread::yield_now();
-                }
-            });
-        }
-
-        w1.push_back(PAYLOAD);
-        while r2.pop_front().is_none() {
-            std::thread::yield_now();
-        }
-    });
-}
-
 fn lockfree_ping(t: usize) {
     let (mut w1, r1) = create();
     let (w2, r2) = create();
@@ -345,14 +269,6 @@ fn bench(c: &mut Criterion) {
             &t,
             |b, &t| b.iter(|| push_pop_sling(t)),
         );
-        /*
-        group.bench_function(format!("ZSling {t} Thread(s)"), |b| {
-            b.iter(|| push_pop_zsling(t))
-        });
-        group.bench_function(format!("Sling Cloned {t} Threads"), |b| {
-            b.iter(|| push_pop_sling_clone(t))
-        });
-        */
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("Crossbeam Channel {t} Thread(s)")),
             &t,
@@ -385,7 +301,6 @@ fn bench_ping(c: &mut Criterion) {
         group.bench_with_input(format!("Sling {t} Thread(s)"), &t, |b, &t| {
             b.iter(|| sling_ping(t))
         });
-        // group.bench_function(format!("ZSling {t} Threads"), |b| b.iter(|| zsling_ping(t)));
         group.bench_with_input(format!("Crossbeam {t} Thread(s)"), &t, |b, &t| {
             b.iter(|| crossbeam_ping(t))
         });
