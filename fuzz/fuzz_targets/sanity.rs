@@ -55,7 +55,7 @@ fuzz_target!(|data: Vec<Message>| {
                 let mut counter = 0;
                 while reader.pop_front().is_none() && counter < MAX_SPIN {
                     counter += 1;
-                    core::hint::spin_loop();
+                    std::thread::yield_now();
                 }
 
                 if counter < MAX_SPIN {
@@ -66,8 +66,11 @@ fuzz_target!(|data: Vec<Message>| {
             });
         }
 
-        for message in data {
-            writer.push_back(range(message));
+        for window in data.windows(8) {
+            for &message in window {
+                writer.push_back(range(message));
+            }
+            std::thread::yield_now();
         }
     })
 });
