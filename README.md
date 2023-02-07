@@ -88,6 +88,6 @@ NUMA:
   NUMA node0 CPU(s):     0-15
 ```
 
-### Flamegraph
+## Flamegraph
 
 ![flamegraph](./flamegraph.svg)
