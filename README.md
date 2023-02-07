@@ -52,9 +52,10 @@ channel and [lockfree's](https://crates.io/crates/lockfree) spmc channel.
 
 ![violin-plot](<./target/criterion/reports/Bench Sling Ping Variable Threads/violin.svg>)
 **Disclaimer**: These benchmarks were performed on a personal computer and may not be prepresentative
-of relative performance on other computers. 
+of relative performance on other computers.
 
 Specifications of the benchmarking system:
+
 ```
 Architecture:            x86_64
   CPU op-mode(s):        32-bit, 64-bit
@@ -74,7 +75,7 @@ Vendor ID:               GenuineIntel
     CPU max MHz:         5100.0000
     CPU min MHz:         800.0000
     BogoMIPS:            7602.45
-    
+
 Virtualization features:
   Virtualization:        VT-x
 Caches (sum of all):
@@ -85,4 +86,8 @@ Caches (sum of all):
 NUMA:
   NUMA node(s):          1
   NUMA node0 CPU(s):     0-15
-  ```
+```
+
+### Flamegraph
+
+![flamegraph](./flamegraph.svg)

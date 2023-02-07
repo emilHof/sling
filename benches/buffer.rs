@@ -3,7 +3,7 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize},
 };
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use crossbeam::channel::{bounded, unbounded};
 use lockfree::channel::spmc::create;
 use sling::RingBuffer;
@@ -340,9 +340,11 @@ fn lockfree_ping(t: usize) {
 fn bench(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("Bench Throughput With Variable Threads"));
     THREADS.into_iter().for_each(|t| {
-        group.bench_function(format!("Sling {t} Thread(s)"), |b| {
-            b.iter(|| push_pop_sling(t))
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("Sling {t} Thread(s)")),
+            &t,
+            |b, &t| b.iter(|| push_pop_sling(t)),
+        );
         /*
         group.bench_function(format!("ZSling {t} Thread(s)"), |b| {
             b.iter(|| push_pop_zsling(t))
@@ -351,12 +353,16 @@ fn bench(c: &mut Criterion) {
             b.iter(|| push_pop_sling_clone(t))
         });
         */
-        group.bench_function(format!("Crossbeam Channel {t} Thread(s)"), |b| {
-            b.iter(|| push_pop_crossbeam(t))
-        });
-        group.bench_function(format!("Lockfree Channel {t} Thread(s)"), |b| {
-            b.iter(|| push_pop_lockfree(t))
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("Crossbeam Channel {t} Thread(s)")),
+            &t,
+            |b, &t| b.iter(|| push_pop_crossbeam(t)),
+        );
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("Lockfree Channel {t} Thread(s)")),
+            &t,
+            |b, &t| b.iter(|| push_pop_lockfree(t)),
+        );
     });
     group.finish();
 }
@@ -365,7 +371,7 @@ fn bench_sling(c: &mut Criterion) {
     let mut group = c.benchmark_group("Bench Sling at Variable Threads".to_string());
 
     THREADS.into_iter().for_each(|t| {
-        group.bench_function(format!("Sling {t} Thread(s)"), |b| {
+        group.bench_with_input(BenchmarkId::from_parameter(t), &t, |b, &t| {
             b.iter(|| push_pop_sling(t))
         });
     });
@@ -376,12 +382,14 @@ fn bench_ping(c: &mut Criterion) {
     let mut group = c.benchmark_group("Bench Sling Ping Variable Threads".to_string());
 
     THREADS.into_iter().for_each(|t| {
-        group.bench_function(format!("Sling {t} Thread(s)"), |b| b.iter(|| sling_ping(t)));
+        group.bench_with_input(format!("Sling {t} Thread(s)"), &t, |b, &t| {
+            b.iter(|| sling_ping(t))
+        });
         // group.bench_function(format!("ZSling {t} Threads"), |b| b.iter(|| zsling_ping(t)));
-        group.bench_function(format!("Crossbeam {t} Thread(s)"), |b| {
+        group.bench_with_input(format!("Crossbeam {t} Thread(s)"), &t, |b, &t| {
             b.iter(|| crossbeam_ping(t))
         });
-        group.bench_function(format!("Lockfree {t} Thread(s)"), |b| {
+        group.bench_with_input(format!("Lockfree {t} Thread(s)"), &t, |b, &t| {
             b.iter(|| lockfree_ping(t))
         });
     });
@@ -392,7 +400,4 @@ criterion_group!(benches, bench);
 criterion_group!(bench_variable_threads, bench_sling);
 criterion_group!(bench_ping_threads, bench_ping);
 
-criterion_main!(
-    benches,
-    /* bench_variable_threads, */ bench_ping_threads
-);
+criterion_main!(bench_variable_threads, benches, bench_ping_threads,);
