@@ -296,6 +296,25 @@ impl<'read, T: Copy, const N: usize> SharedReader<'read, T, N> {
                 )?
             };
 
+            // On failure we end here, as we have an outdated version and thus are reading consumed
+            // data.
+            self.version
+                .compare_exchange(ver, seq2, Ordering::Relaxed, Ordering::Relaxed)
+                .ok()?;
+
+            // If this fails, someone has already read the data. This is the only time we should
+            // retry the loop.
+            // This is `Release` on store to ensure that the new version of the `SharedReader` is
+            // observed by all sharing threads, and on failure we `Acquire` to ensure we get the
+            // latest version.
+            if let Err(new) =
+                self.index
+                    .compare_exchange(i, (i + 1) % N, Ordering::Release, Ordering::Acquire)
+            {
+                i = new;
+                continue;
+            }
+
             // We cannot test the this part of the process with `loom`, as this operation is `UB`
             // if data is written too while we are reading it; yet, due to the nature of seqlock,
             // we discard the `UB` reads. Future versions of the compiler may optimize this code in
@@ -316,26 +335,7 @@ impl<'read, T: Copy, const N: usize> SharedReader<'read, T, N> {
             };
 
             if seq1 != seq2 {
-                continue;
-            }
-
-            // On failure we end here, as we have an outdated version and thus are reading consumed
-            // data.
-            self.version
-                .compare_exchange(ver, seq2, Ordering::Relaxed, Ordering::Relaxed)
-                .ok()?;
-
-            // If this fails, someone has already read the data. This is the only time we should
-            // retry the loop.
-            // This is `Release` on store to ensure that the new version of the `SharedReader` is
-            // observed by all sharing threads, and on failure we `Acquire` to ensure we get the
-            // latest version.
-            if let Err(new) =
-                self.index
-                    .compare_exchange(i, (i + 1) % N, Ordering::Release, Ordering::Acquire)
-            {
-                i = new;
-                continue;
+                return None;
             }
 
             #[cfg(not(loom))]
@@ -589,5 +589,41 @@ mod test {
                 writer.push_back([0, 32, 31, 903, 1, 4, 23, 12, 4, 21]);
             }
         });
+    }
+
+    #[test]
+    fn test_ping() {
+        for _ in 0..1000 {
+            let b1 = RingBuffer::<_, 128>::new();
+            let read = AtomicBool::new(false);
+
+            let mut writer = b1.try_lock().unwrap();
+            let reader = b1.reader();
+
+            std::thread::scope(|s| {
+                let reader = &reader;
+                let read = &read;
+
+                for t in 0..8 {
+                    s.spawn(move || {
+                        while !read.load(Ordering::SeqCst) {
+                            if reader.pop_front().is_some() {
+                                read.store(true, Ordering::SeqCst);
+                            } else {
+                                std::thread::yield_now();
+                            }
+                        }
+
+                        for _ in 0..100 {
+                            if let Some(val) = reader.pop_front() {
+                                println!("t: {t}, val: {val:?}");
+                            };
+                        }
+                    });
+                }
+
+                writer.push_back(());
+            });
+        }
     }
 }
