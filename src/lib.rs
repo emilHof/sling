@@ -218,6 +218,24 @@ impl<T: Copy, const N: usize> RingBuffer<T, N> {
         }
     }
 
+    /// Creates a new [`OwnedReader`] which provides read access of the queue. Reclusive access
+    /// to this reader is required when reading from the queue and its read state is not shared.
+    /// Thus, the progress of an [`OwnedReader`] is independent of any others.
+    /// ```rust
+    /// # use sling::*;
+    /// let buffer: RingBuffer<[u8; 16], 1024> = RingBuffer::new();
+    ///
+    /// let reader = buffer.owned_reader();
+    /// ```
+    #[inline]
+    pub fn owned_reader(&self) -> OwnedReader<'_, T, N> {
+        OwnedReader {
+            buffer: self,
+            index: 0,
+            version: self.version.load(Ordering::Relaxed),
+        }
+    }
+
     /// Increments the sequence at the current index by 1, making it odd, prohibiting reads.
     #[inline]
     fn start_write(&self) -> usize {
@@ -299,7 +317,7 @@ impl<'read, T: Copy, const N: usize> SharedReader<'read, T, N> {
             // On failure we end here, as we have an outdated version and thus are reading consumed
             // data.
             self.version
-                .compare_exchange(ver, seq2, Ordering::Relaxed, Ordering::Relaxed)
+                .compare_exchange(ver, seq1, Ordering::Relaxed, Ordering::Relaxed)
                 .ok()?;
 
             // If this fails, someone has already read the data. This is the only time we should
@@ -350,13 +368,87 @@ impl<'read, T: Copy, const N: usize> SharedReader<'read, T, N> {
     fn check_version(mut seq: usize, ver: usize, i: usize) -> Option<usize> {
         // The current version of the
         if seq & 1 != 0 {
-            // Spin until we messages is written.
             return None;
         }
 
+        // TODO(emilHof) This should not be needed!
         seq &= usize::MAX - 1;
 
         if (i == 0 && seq == ver) || seq < ver {
+            return None;
+        }
+
+        Some(seq)
+    }
+}
+
+/// Shared read access to its buffer. When multiple threads consume from the
+/// [`RingBuffer`] throught the same [`SharedReader`], they will share progress
+/// on the queue. Distinct [`RingBuffers`] do not share progress.
+#[derive(Debug)]
+pub struct OwnedReader<'read, T: Copy, const N: usize> {
+    buffer: &'read RingBuffer<T, N>,
+    index: usize,
+    version: usize,
+}
+
+/// Clones a [`OwnedReader`], creating a new one that does not share progress with the
+/// original [`OwnedReader`].
+impl<'read, T: Copy, const N: usize> Clone for OwnedReader<'read, T, N> {
+    fn clone(&self) -> Self {
+        OwnedReader {
+            buffer: &self.buffer,
+            index: self.index,
+            version: self.version,
+        }
+    }
+}
+
+impl<'read, T: Copy, const N: usize> Copy for OwnedReader<'read, T, N> {}
+
+unsafe impl<'read, T: Copy, const N: usize> Send for OwnedReader<'read, T, N> {}
+
+impl<'read, T: Copy, const N: usize> OwnedReader<'read, T, N> {
+    /// Pops the next element from the front. The element is only popped for us and other threads
+    /// will still need to pop this for themselves.
+    #[inline]
+    pub fn pop_front(&mut self) -> Option<T> {
+        let seq1 = self.check_version()?;
+
+        let data: T = unsafe {
+            read_volatile(
+                self.buffer
+                    .data
+                    .get_unchecked(self.index)
+                    .message
+                    .get()
+                    .cast::<T>(),
+            )
+        };
+
+        let seq2 = self.check_version()?;
+
+        if seq1 != seq2 {
+            return None;
+        }
+
+        self.index = (self.index + 1) % N;
+        self.version = seq2;
+
+        return Some(data);
+    }
+
+    /// Checks if we are reading data we have already consumed.
+    #[inline]
+    fn check_version(&self) -> Option<usize> {
+        let seq = self.buffer.data[self.index].seq.load(Ordering::Acquire);
+
+        // The current version of the
+        if seq & 1 != 0 {
+            return None;
+        }
+
+        if (self.index == 0 && seq == self.version) || seq < self.version {
             return None;
         }
 
