@@ -127,64 +127,22 @@ fn push_pop_sling(t: usize) {
     });
 }
 
-fn push_pop_sling_clone(t: usize) {
-    let queue = RingBuffer::<_, BUF_LEN>::new();
-    let mut writer = queue.try_lock().unwrap();
-    let reader = queue.reader();
-
-    let read = AtomicUsize::new(0);
-    std::thread::scope(|s| {
-        let read = &read;
-        for _ in 0..t {
-            s.spawn(|| loop {
-                let reader = reader.clone();
-                while reader.pop_front().is_some() {
-                    read.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                }
-
-                let mut counter = 0;
-
-                while reader.pop_front().is_none() && counter < MAX_SPIN {
-                    counter += 1;
-                    std::thread::yield_now();
-                }
-
-                if counter < MAX_SPIN {
-                    continue;
-                }
-
-                break;
-            });
-        }
-
-        for _ in 0..black_box(ELEMENTS / 20) {
-            for _ in 0..20 {
-                writer.push_back([PAYLOAD]);
-            }
-            std::thread::yield_now();
-        }
-    });
-}
-
 fn sling_ping(t: usize) {
-    let q1 = RingBuffer::<_, BUF_LEN>::new();
-    let q2 = RingBuffer::<_, BUF_LEN>::new();
+    let q = RingBuffer::<_, BUF_LEN>::new();
 
-    let mut w1 = q1.try_lock().unwrap();
-    let r1 = q1.reader();
-    let r2 = q2.reader();
+    let mut writer = q.try_lock().unwrap();
+    let reader = q.reader();
 
     let pinged = AtomicBool::new(false);
 
     std::thread::scope(|s| {
-        let r1 = &r1;
+        let reader = &reader;
         let pinged = &pinged;
 
         for _ in 0..t {
             s.spawn(|| {
                 while !pinged.load(std::sync::atomic::Ordering::Acquire) {
-                    if r1.pop_front().is_some() {
-                        q2.try_lock().unwrap().push_back(PAYLOAD);
+                    if reader.pop_front().is_some() {
                         pinged.store(true, std::sync::atomic::Ordering::Release);
                     }
                     std::thread::yield_now();
@@ -192,28 +150,23 @@ fn sling_ping(t: usize) {
             });
         }
 
-        w1.push_back(PAYLOAD);
-        while r2.pop_front().is_none() {
-            std::thread::yield_now();
-        }
+        writer.push_back(PAYLOAD);
     });
 }
 
 fn crossbeam_ping(t: usize) {
-    let (w1, r1) = unbounded();
-    let (w2, r2) = unbounded();
+    let (writer, reader) = unbounded();
 
     let pinged = AtomicBool::new(false);
 
     std::thread::scope(|s| {
-        let r1 = &r1;
+        let reader = &reader;
         let pinged = &pinged;
 
         for _ in 0..t {
             s.spawn(|| {
                 while !pinged.load(std::sync::atomic::Ordering::Acquire) {
-                    if r1.try_recv().is_ok() {
-                        w2.try_send(PAYLOAD);
+                    if reader.try_recv().is_ok() {
                         pinged.store(true, std::sync::atomic::Ordering::Release);
                     }
                     std::thread::yield_now();
@@ -221,32 +174,23 @@ fn crossbeam_ping(t: usize) {
             });
         }
 
-        w1.try_send(PAYLOAD);
-        while r2.try_recv().is_err() {
-            std::thread::yield_now();
-        }
+        writer.try_send(PAYLOAD);
     });
 }
 
 fn lockfree_ping(t: usize) {
-    let (mut w1, r1) = create();
-    let (w2, r2) = create();
+    let (mut writer, reader) = create();
 
     let pinged = AtomicBool::new(false);
 
     std::thread::scope(|s| {
-        let r1 = &r1;
+        let reader = &reader;
         let pinged = &pinged;
 
         for _ in 0..t {
             s.spawn(|| {
                 while !pinged.load(std::sync::atomic::Ordering::Acquire) {
-                    if r1.recv().is_ok() {
-                        unsafe {
-                            (*(&w2 as *const lockfree::channel::spmc::Sender<[u8; 8]>
-                                as *mut lockfree::channel::spmc::Sender<[u8; 8]>))
-                                .send(PAYLOAD)
-                        };
+                    if reader.recv().is_ok() {
                         pinged.store(true, std::sync::atomic::Ordering::Release);
                     }
                     std::thread::yield_now();
@@ -254,10 +198,7 @@ fn lockfree_ping(t: usize) {
             });
         }
 
-        w1.send(PAYLOAD);
-        while r2.recv().is_err() {
-            std::thread::yield_now();
-        }
+        writer.send(PAYLOAD);
     });
 }
 
